@@ -165,6 +165,48 @@ public function toFcm($notifiable)
 }
 ```
 
+## Handling errors
+
+When a notification fails it will dispatch an `Illuminate\Notifications\Events\NotificationFailed` event. You can listen
+for this event and choose to handle these notifications as appropriate. For example, you may choose to delete expired
+notification tokens from your database.
+
+```php
+<?php
+
+namespace App\Listeners;
+
+use Benwilkins\FCM\FcmChannel;
+use Benwilkins\FCM\NotificationFailedEvent;
+
+class DeleteExpiredFCMTokens
+{
+    public function handle(NotificationFailedEvent $event): void
+    {
+        if ($event->channel == FcmChannel::class) {
+            if ($event->data['results'][0]['error'] == 'InvalidRegistration') {
+                $event->notifiable->update(['device_token' => null]);
+            }
+        }
+    }
+}
+```
+
+Remember to register your event listeners in the event service provider.
+
+```php
+/**
+ * The event listener mappings for the application.
+ *
+ * @var array
+ */
+protected $listen = [
+    Benwilkins\FCM\NotificationFailedEvent::class => [
+        \App\Listeners\DeleteExpiredFCMTokens::class,
+    ],
+];
+```
+
 ## Interpreting a Response
 
 To process any laravel notification channel response check [Laravel Notification Events](https://laravel.com/docs/6.0/notifications#notification-events)

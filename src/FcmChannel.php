@@ -4,55 +4,39 @@ namespace Benwilkins\FCM;
 
 use GuzzleHttp\Client;
 use Illuminate\Notifications\Notification;
+use Illuminate\Support\Collection;
 
 /**
  * Class FcmChannel.
  */
 class FcmChannel
 {
-    /**
-     * @const The API URL for Firebase
-     */
-    const API_URI = 'https://fcm.googleapis.com/fcm/send';
+    private const API_URI = 'https://fcm.googleapis.com/fcm/send';
 
-    /**
-     * @var Client
-     */
-    private $client;
+    private Client $client;
 
-    /**
-     * @var string
-     */
-    private $apiKey;
+    private string $apiKey;
 
-    /**
-     * @param  Client  $client
-     */
-    public function __construct(Client $client, $apiKey)
+    public function __construct(Client $client, string $apiKey)
     {
         $this->client = $client;
         $this->apiKey = $apiKey;
     }
 
-    /**
-     * @param  mixed  $notifiable
-     * @param  Notification  $notification
-     * @return mixed
-     */
-    public function send($notifiable, Notification $notification)
+    public function send($notifiable, Notification $notification): mixed
     {
         /** @var FcmMessage $message */
         $message = $notification->toFcm($notifiable);
 
         if (is_null($message->getTo()) && is_null($message->getCondition())) {
             if (! $to = $notifiable->routeNotificationFor('fcm', $notification)) {
-                return;
+                return [];
             }
 
             $message->to($to);
         }
 
-        $response_array = [];
+        $responseArray = [];
 
         if (is_array($message->getTo())) {
             $chunks = array_chunk($message->getTo(), 1000);
@@ -60,28 +44,38 @@ class FcmChannel
             foreach ($chunks as $chunk) {
                 $message->to($chunk);
 
-                $response = $this->client->post(self::API_URI, [
-                    'headers' => [
-                        'Authorization' => 'key='.$this->apiKey,
-                        'Content-Type'  => 'application/json',
-                    ],
-                    'body' => $message->formatData(),
-                ]);
-
-                array_push($response_array, \GuzzleHttp\json_decode($response->getBody(), true));
+                $responseArray[] = $this->sendPushNotification($message, $responseArray);
             }
         } else {
-            $response = $this->client->post(self::API_URI, [
-                'headers' => [
-                    'Authorization' => 'key='.$this->apiKey,
-                    'Content-Type' => 'application/json',
-                ],
-                'body' => $message->formatData(),
-            ]);
-
-            array_push($response_array, \GuzzleHttp\json_decode($response->getBody(), true));
+            $responseArray[] = $this->sendPushNotification($message, $responseArray);
         }
 
-        return $response_array;
+        Collection::make($responseArray)
+            ->filter(function ($response) {
+                return $response['failure'] == 1;
+            })
+            ->each(function ($response) use ($notification, $notifiable) {
+                $this->dispatchFailedNotification($notifiable, $notification, $response);
+            });
+
+        return $responseArray;
+    }
+
+    private function sendPushNotification(FcmMessage $message, array $responseArray): array
+    {
+        $response = $this->client->post(self::API_URI, [
+            'headers' => [
+                'Authorization' => 'key='.$this->apiKey,
+                'Content-Type'  => 'application/json',
+            ],
+            'body'    => $message->formatData(),
+        ]);
+
+        return json_decode($response->getBody(), true);
+    }
+
+    protected function dispatchFailedNotification(mixed $notifiable, Notification $notification, array $report): void
+    {
+        NotificationFailedEvent::dispatch($notifiable, $notification, self::class, $report);
     }
 }
