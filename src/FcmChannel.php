@@ -44,24 +44,16 @@ class FcmChannel
             foreach ($chunks as $chunk) {
                 $message->to($chunk);
 
-                $responseArray[] = $this->sendPushNotification($message, $responseArray);
+                $responseArray[] = $this->sendPushNotification($notifiable, $notification, $message, $responseArray);
             }
         } else {
-            $responseArray[] = $this->sendPushNotification($message, $responseArray);
+            $responseArray[] = $this->sendPushNotification($notifiable, $notification, $message, $responseArray);
         }
-
-        Collection::make($responseArray)
-            ->filter(function ($response) {
-                return $response['failure'] == 1;
-            })
-            ->each(function ($response) use ($notification, $notifiable) {
-                $this->dispatchFailedNotification($notifiable, $notification, $response);
-            });
 
         return $responseArray;
     }
 
-    private function sendPushNotification(FcmMessage $message, array $responseArray): array
+    private function sendPushNotification($notifiable, $notification, FcmMessage $message, array $responseArray): array
     {
         $response = $this->client->post(self::API_URI, [
             'headers' => [
@@ -71,7 +63,13 @@ class FcmChannel
             'body'    => $message->formatData(),
         ]);
 
-        return json_decode($response->getBody(), true);
+        $responseArray = json_decode($response->getBody(), true);
+
+        if ($response->getStatusCode() != 200) {
+            $this->dispatchFailedNotification($notifiable, $notification, $responseArray);
+        }
+
+        return $responseArray;
     }
 
     protected function dispatchFailedNotification(mixed $notifiable, Notification $notification, array $report): void
